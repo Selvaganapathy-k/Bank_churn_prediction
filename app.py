@@ -64,8 +64,29 @@ def train_and_save(df: pd.DataFrame, model_path: Path) -> Pipeline:
 
 def load_model(model_path: Path) -> Pipeline | None:
     if model_path.exists():
-        with open(model_path, "rb") as f:
-            return pickle.load(f)
+        try:
+            with open(model_path, "rb") as f:
+                return pickle.load(f)
+        except Exception as e:
+            # Common causes: model was pickled with a different sklearn version
+            # or the file is corrupted. Don't let the app crash — move the file
+            # aside and return None so a new model can be trained.
+            try:
+                backup = model_path.with_suffix(model_path.suffix + ".corrupt")
+                model_path.rename(backup)
+            except Exception:
+                backup = None
+            # Use Streamlit to inform the user in the UI; logs will contain full traceback
+            try:
+                st.warning(
+                    "Saved model could not be loaded (incompatible/corrupt). It was moved aside and a new model can be trained."
+                )
+                if backup is not None:
+                    st.info(f"Old model moved to: {backup.name}")
+            except Exception:
+                # If Streamlit isn't initialized (rare), ignore UI calls and continue
+                pass
+            return None
     return None
 
 
@@ -94,6 +115,17 @@ def main():
 
     elif action == "Train / Load Model":
         st.header("Train or load model")
+        # Allow the user to remove a saved model from the UI (helpful if the pickle
+        # becomes incompatible or corrupt in the deployed environment).
+        if st.button("Reset saved model"):
+            try:
+                if MODEL_PATH.exists():
+                    MODEL_PATH.unlink()
+                    st.success("Saved model file removed. You can train a fresh model now.")
+                else:
+                    st.info("No saved model file found to remove.")
+            except Exception as e:
+                st.error(f"Could not remove saved model: {e}")
         model = load_model(MODEL_PATH)
         if model is None:
             st.info("No saved model found — training a new model. This may take a few seconds.")
